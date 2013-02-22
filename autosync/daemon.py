@@ -1,5 +1,6 @@
 import select 
 from pyinotify import WatchManager, Notifier, ThreadedNotifier, EventsCodes, ProcessEvent
+import gevent
 from gevent import queue, spawn, joinall
 from gevent.queue import Queue
 from gevent.monkey import patch_all
@@ -11,7 +12,7 @@ import os.path
 
 import gflags
 
-# patch_all()
+patch_all(select=False)
 
 FLAGS = gflags.FLAGS
 
@@ -89,11 +90,9 @@ class State(object):
         self.prefix = prefix
 
     def upload(self, key):
-        print "Upload:", key
         self.que.put(('u', key))
         
     def delete(self, key):
-        print "Delete:", key
         self.que.put(('d', key))
                 
     def filename_to_File(self, path):
@@ -155,9 +154,6 @@ class TrackState(State, ProcessEvent):
         print "Delete: ", path
         self.delete(self.filename_to_File(path))
     
-    def __init__(self, *args, **kwargs):
-        State.__init__(self, *args, **kwargs)
-
     def run(self):
         wm = WatchManager()
         notifier = Notifier(wm, self)
@@ -169,9 +165,10 @@ class TrackState(State, ProcessEvent):
             try:
                 # process the queue of events as explained above
                 notifier.process_events()
-                if notifier.check_events():
+                if notifier.check_events(100):
                     # read notified events and enqeue them
                     notifier.read_events()
+                gevent.sleep(0)
                 # you can do some tasks here...
             except KeyboardInterrupt:
                 notifier.stop()
@@ -195,13 +192,22 @@ class Uploader(object):
             
     def uploader_thread(self, actor_factory):
         actor = actor_factory()
-        
         while True:
             task, key = self.que.get()
+            try:
+                print task, key
+            except (OSError, IOError):
+                pass
             if task == 'd':
-                actor.delete(key)
+                try:
+                    actor.delete(key)
+                except (OSError, IOError):
+                    pass
             elif task == 'u':
-                actor.upload(key)
+                try:
+                    actor.upload(key)
+                except (OSError, IOError):
+                    pass
 
 
 def main(argv = None, stdin = None, stdout=None, stderr=None):
@@ -217,11 +223,13 @@ def main(argv = None, stdin = None, stdout=None, stderr=None):
         print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
         return 1
 
-    actor = ACTOR_CONNECTION_FACTORIES[FLAGS.actor]
-    actor = actor(FLAGS.target_container, FLAGS.target_prefix)
-    actor = actor.get_container
+    def actor_factory():
 
-    uploader = Uploader(actor, argv, FLAGS.source_prefix)
+        actor = ACTOR_CONNECTION_FACTORIES[FLAGS.actor]
+        actor = actor(FLAGS.target_container, FLAGS.target_prefix)
+        return actor.get_container()
+
+    uploader = Uploader(actor_factory, argv, FLAGS.source_prefix)
     threads = list(uploader.run())
 
     joinall(threads)
