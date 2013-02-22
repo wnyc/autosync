@@ -12,10 +12,10 @@ from setuptools import setup
 
 setup(
     name='autosync',
-    version='0.0.0',
+    version='0.0.1',
     author='Adam DePrince',
     author_email='adeprince@nypublicradio.org',
-    description='Efficent syncronization of the local file system to S3',
+    description='Efficent synchronization of the local file system to S3',
     long_description=__doc__,
     py_modules = [
         "autosync/__init__",
@@ -37,6 +37,7 @@ setup(
     install_requires = [
         "python-gflags",
         "boto",
+        "gevent",
         "pyinotify"
         ]
 )

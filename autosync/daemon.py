@@ -137,42 +137,39 @@ class SyncState(State):
 class TrackState(State, ProcessEvent):
     mask = EventsCodes.OP_FLAGS['IN_DELETE'] | EventsCodes.OP_FLAGS['IN_CREATE'] | EventsCodes.OP_FLAGS['IN_MODIFY']
 
+    def __init__(self, *args, **kwargs):
+        State.__init__(self, *args, **kwargs)
+        self.wm = WatchManager()
+        self.notifier = Notifier(self.wm, self)
+
     def process_IN_CREATE(self, event):
         path = os.path.join(event.path, event.name)
-        print "Create: ", path
         if os.path.isfile(path):
             self.upload(self.filename_to_File(path))
+        elif os.path.isdir(path):
+            self.wm.add_watch(path, self.mask, rec=True)
 
     def process_IN_MODIFY(self, event):
         path = os.path.join(event.path, event.name)
-        print "Modify: ", path
         if os.path.isfile(path):
             self.upload(self.filename_to_File(path))
 
     def process_IN_DELETE(self, event):
         path = os.path.join(event.path, event.name)
-        print "Delete: ", path
         self.delete(self.filename_to_File(path))
     
     def run(self):
-        wm = WatchManager()
-        notifier = Notifier(wm, self)
         for f in self.files:
             f = os.path.abspath(f)
-            wm.add_watch(f, self.mask, rec=True)
-            
-        while True:  # loop forever
-            try:
-                # process the queue of events as explained above
-                notifier.process_events()
-                if notifier.check_events(100):
-                    # read notified events and enqeue them
-                    notifier.read_events()
+            self.wm.add_watch(f, self.mask, rec=True)
+        try:
+            while True:
+                self.notifier.process_events()
+                if self.notifier.check_events(100):
+                    self.notifier.read_events()
                 gevent.sleep(0)
-                # you can do some tasks here...
-            except KeyboardInterrupt:
-                notifier.stop()
-                break
+        except KeyboardInterrupt:
+            self.notifier.stop()
 
         
         
@@ -184,20 +181,19 @@ class Uploader(object):
         self.que = Queue()
         
     def run(self):
-        SyncState(self.actor_factory(), self.argv, self.source_prefix, self.que).run()
+        trackstate = TrackState(self.actor_factory(), self.argv, self.source_prefix, self.que)
+        syncstate = SyncState(self.actor_factory(), self.argv, self.source_prefix, self.que)
+
         for x in range(FLAGS.threads):
             yield spawn(self.uploader_thread, self.actor_factory)
-        TrackState(self.actor_factory(), self.argv, self.source_prefix, self.que).run()
-            
+
+        syncstate.run()
+        trackstate.run()
             
     def uploader_thread(self, actor_factory):
         actor = actor_factory()
         while True:
             task, key = self.que.get()
-            try:
-                print task, key
-            except (OSError, IOError):
-                pass
             if task == 'd':
                 try:
                     actor.delete(key)
