@@ -19,8 +19,8 @@ setup(
     long_description=__doc__,
     py_modules = [
         "autosync/actors/s3",
-        "autosync/actors",
-        "autosync/scanners",
+        "autosync/actors/__init__",
+        "autosync/scanners/__init__",
         "autosync/scanners/inotify",
         "autosync/daemon",
         ],
@@ -30,14 +30,15 @@ setup(
     include_package_data=True,
     classifiers=[
         ],
-    scripts = [# 'scripts/autosync',
-               ],
+    scripts = [
+        'scripts/autosync',
+        ],
     url = "https://github.com/wnyc/autosync",
     install_requires = [
         "python-gflags",
         "python-cloudfiles",
         "boto",
-        "watchdog"
+        "pyinotify"
         ]
 )
 

@@ -1,8 +1,18 @@
-from gevent import queue, spawn, join
-from gevent.queue import Queue, QueueEmpty
+import select 
+from pyinotify import WatchManager, Notifier, ThreadedNotifier, EventsCodes, ProcessEvent
+from gevent import queue, spawn, joinall
+from gevent.queue import Queue
+from gevent.monkey import patch_all
+import autosync
+import autosync.actors
+import autosync.actors.s3
 from autosync.files import File
+import os.path
 
 import gflags
+
+# patch_all()
+
 FLAGS = gflags.FLAGS
 
 gflags.DEFINE_string('target_container', None, 'The remote bucket to write into.  This would be an S3 bucket, rackspace container, rsync host and module or maybe Drive letter in Windows')
@@ -17,10 +27,10 @@ gflags.DEFINE_string('cachefile', None, 'autosync has the ability to cache md5 v
 
 gflags.DEFINE_boolean('start_sync', True, 'Perform an initial scan of all local files and attempt to sync.  If this is set to false autosync will jump directly to its monitoring phase without performing an initial scan.  Setting this option to false could, in the event files are modified while autosync is not running, result in in mismatch between the local and remote files.')
 
-gflags.DEFINE_boolean('threads', 100, 'Number of upload threads.  Most operations are I/O, not CPU bound, so feel free to make this very high')
+gflags.DEFINE_integer('threads', 100, 'Number of upload threads.  Most operations are I/O, not CPU bound, so feel free to make this very high')
 
 
-ACTOR_CONNECTION_FACTORIES = {'s3': autosync.actor.s3.Connection}
+ACTOR_CONNECTION_FACTORIES = {'s3': autosync.actors.s3.Connection}
 
 def usage():
     print "autosync: source-file, [source-file]..."
@@ -35,8 +45,8 @@ def next(*iters):
     results = []
     for i in iters:
         try:
-            results.append(i.net())
-        except StopIteration():
+            results.append(i.next())
+        except StopIteration:
             results.append(None)
     return results
         
@@ -48,91 +58,146 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
             break
         if next_a.key < next_b.key:
             func_a(next_a)
-            next_a = next(iter_a)
+            next_a = next(iter_a)[0]
             continue
         if next_a.key > next_b.key:
             func_b(next_b)
-            next_b = next(iter_b)
+            next_b = next(iter_b)[0]
             continue
-        if next_a != next_b:
-            func_a(next_a))
+        if next_a.size != next_b.size:
+            if next_a.md5 != next_b.md5:
+                func_both(next_a)
         next_a, next_b = next(iter_a, iter_b)
 
     
     while next_a:
-        next_a = next(iter_a)
+        next_a = next(iter_a)[0]
         if next_a: func_a(next_a)
     
     while next_b:
-        next_b = next(iter_b)
+        next_b = next(iter_b)[0]
         if next_b: func_b(next_b)
 
+
+
+class State(object):
+    def __init__(self, actor, files, prefix, que):
+        self.files = files
+        self.actor = actor
+        self.local_que = Queue()
+        self.que = que
+        self.prefix = prefix
+
+    def upload(self, key):
+        print "Upload:", key
+        self.que.put(('u', key))
         
-
-class SyncState(object):
-
-    def add_path_to_que(self, path):
+    def delete(self, key):
+        print "Delete:", key
+        self.que.put(('d', key))
+                
+    def filename_to_File(self, path):
         path = os.path.abspath(path)
         name = path
         if name.startswith(self.prefix):
             name = name[len(self.prefix):]
         while name.startswith('/'):
             name = name[1:]
-        self.local_que.put(File(name, path))
+        return File(name, path)
 
-    @staticmethod
-    def walker(self, args , dirname, fnames):
+
+class SyncState(State):
+
+    def add_path_to_que(self, path):
+        self.local_que.put(self.filename_to_File(path))
+        
+    def walker(self,_ , dirname, fnames):
         fnames.sort()
         for fname in fnames:
             fname = os.path.join(dirname, fname)
             if os.path.isfile(fname):
                 self.add_path_to_que(fname)
 
-    def walker_thread(self, sources, local_que):
+    def walker_thread(self, sources):
         for source in sources:
             source = os.path.abspath(source)
             if os.path.isfile(source):
                 self.add_path_to_que(fname)
             else:
-                walker(source, self.walker, local_que)
-        local_que.put(None)
-
-    def __init__(self, actor, files, prefix, upload_que, delete_que):
-        self.files = files
-        self.actor = actor
-        self.local_que = queue()
-        self.upload_que = upload_que
-        self.delete_que = delete_que
-        
-        
-    def upload(self, key):
-        self.que.put(('u', key))
-        
-    def delete(self, key):
-        self.que.put(('d', key))
+                os.path.walk(source, self.walker, None)
+        self.local_que.put(None)
 
     def run(self):
-        self.walker_job = spawn(walker_thread, files, self.local_que)
-        merge(iterify_queue(self.local_que), 
-              self.actor.list(),
-              self.upload, self.delete)
-        join(self.walker_job)
+        self.walker_job = spawn(self.walker_thread, self.files)
+        merge(iter(sorted(iterify_queue(self.local_que))), 
+              iter(sorted(self.actor.list())),
+              self.upload, self.delete, self.upload)
+        joinall((self.walker_job,))
 
 
+class TrackState(State, ProcessEvent):
+    mask = EventsCodes.OP_FLAGS['IN_DELETE'] | EventsCodes.OP_FLAGS['IN_CREATE'] | EventsCodes.OP_FLAGS['IN_MODIFY']
+
+    def process_IN_CREATE(self, event):
+        path = os.path.join(event.path, event.name)
+        print "Create: ", path
+        if os.path.isfile(path):
+            self.upload(self.filename_to_File(path))
+
+    def process_IN_MODIFY(self, event):
+        path = os.path.join(event.path, event.name)
+        print "Modify: ", path
+        if os.path.isfile(path):
+            self.upload(self.filename_to_File(path))
+
+    def process_IN_DELETE(self, event):
+        path = os.path.join(event.path, event.name)
+        print "Delete: ", path
+        self.delete(self.filename_to_File(path))
+    
+    def __init__(self, *args, **kwargs):
+        State.__init__(self, *args, **kwargs)
+
+    def run(self):
+        wm = WatchManager()
+        notifier = Notifier(wm, self)
+        for f in self.files:
+            f = os.path.abspath(f)
+            wm.add_watch(f, self.mask, rec=True)
+            
+        while True:  # loop forever
+            try:
+                # process the queue of events as explained above
+                notifier.process_events()
+                if notifier.check_events():
+                    # read notified events and enqeue them
+                    notifier.read_events()
+                # you can do some tasks here...
+            except KeyboardInterrupt:
+                notifier.stop()
+                break
+
+        
+        
 class Uploader(object):
-    def __init__(self, actor_factory, source_prefix):
+    def __init__(self, actor_factory, argv, source_prefix):
+        self.argv = argv
+        self.source_prefix = source_prefix
         self.actor_factory = actor_factory
-        self.que = queue()
-
+        self.que = Queue()
+        
     def run(self):
-        SyncState(self.actor_factory(), argv, source_prefix, que).run()
+        SyncState(self.actor_factory(), self.argv, self.source_prefix, self.que).run()
         for x in range(FLAGS.threads):
-            spawn(self.uploader_thread, self.actor_factory)
-
+            yield spawn(self.uploader_thread, self.actor_factory)
+        TrackState(self.actor_factory(), self.argv, self.source_prefix, self.que).run()
+            
+            
     def uploader_thread(self, actor_factory):
         actor = actor_factory()
+        
         while True:
-            task, key = que.get()
+            task, key = self.que.get()
             if task == 'd':
                 actor.delete(key)
             elif task == 'u':
@@ -145,15 +210,23 @@ def main(argv = None, stdin = None, stdout=None, stderr=None):
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
-
+    
     try:
-        FLAGS(argv)[1:]
+        argv = FLAGS(argv)[1:]
     except gflags.FlagsError, e:
-        print >>syderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
+        print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
         return 1
 
-    Uploader(ACTOR_CONNECTION_FACTORIES[FLAGS.actor].Container(FLAGS.target_container, 
-             FLAGS.source_prefix)
+    actor = ACTOR_CONNECTION_FACTORIES[FLAGS.actor]
+    actor = actor(FLAGS.target_container, FLAGS.target_prefix)
+    actor = actor.get_container
+
+    uploader = Uploader(actor, argv, FLAGS.source_prefix)
+    threads = list(uploader.run())
+
+    joinall(threads)
+        
+    
 
 
 
