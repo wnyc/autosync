@@ -36,7 +36,6 @@ setup(
     url = "https://github.com/wnyc/autosync",
     install_requires = [
         "python-gflags",
-        "python-cloudfiles",
         "boto",
         "pyinotify"
         ]
