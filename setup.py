@@ -15,7 +15,7 @@ setup(
     version='0.0.0',
     author='Adam DePrince',
     author_email='adeprince@nypublicradio.org',
-    description='Efficent syncronization of the local file system.',
+    description='Efficent syncronization of the local file system to S3',
     long_description=__doc__,
     py_modules = [
         "autosync/actors/s3",
