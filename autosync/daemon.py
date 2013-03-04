@@ -1,9 +1,36 @@
+
+use_gevent = False
+
 import select 
 from pyinotify import WatchManager, Notifier, ThreadedNotifier, EventsCodes, ProcessEvent
-import gevent
-from gevent import queue, spawn, joinall
-from gevent.queue import Queue
-from gevent.monkey import patch_all
+
+if use_gevent:
+    import gevent
+    from gevent import spawn, joinall
+    from gevent.queue import Queue
+    from gevent.monkey import patch_all
+else:
+    import thread
+    from Queue import Queue
+    # Duplicate gevent's semantics with thread 
+    def spawn(func, *args, **kwargs):
+        def join_emulator(func, lock, *args, **kwargs):
+            func(*args, **kwargs)
+            lock.release()
+
+        lock = thread.allocate_lock()
+        lock.acquire(True)
+
+        args = (lock,) + tuple(args)
+        return thread.start_new_thread(func, args, kwargs)
+
+    def joinall(locks):
+        for lock in locks:
+            lock.acquire(True)
+            lock.release(True)
+    
+    
+
 import autosync
 import autosync.actors
 import autosync.actors.s3
@@ -12,7 +39,8 @@ import os.path
 
 import gflags
 
-patch_all(select=False)
+if use_gevent:
+    patch_all(select=False)
 
 FLAGS = gflags.FLAGS
 
