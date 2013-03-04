@@ -5,10 +5,16 @@ from collections import namedtuple
 
 class CmpFiles:
     def __cmp__(self, other):
-        return cmp(self.key, other.key) or \
-            cmp(self.size, other.size) * 2 or \
-            cmp(self.md5, other.md5) * 4
-
+        if not (hasattr(self, 'mtime') and hasattr(other, 'mtime')):
+            return cmp(self.key, other.key) or \
+                cmp(self.size, other.size) * 2 or \
+                cmp(self.md5, other.md5) * 8
+        else:
+            return cmp(self.key, other.key) or \
+                cmp(self.size, other.size) * 2 or \
+                ( cmp(self.mtime, other.mtime) * 4 and \
+                  cmp(self.md5, other.md5) * 8)
+            
 
 class File(CmpFiles, namedtuple("File", "name path")):
 
@@ -31,6 +37,11 @@ class File(CmpFiles, namedtuple("File", "name path")):
     def size(self):
         return os.stat(self.path).st_size
 
+    @property
+    def mtime(self):
+        return os.stat(self.path).st_mtime
+        
+
     def open(self, *args, **kwargs):
         return open(self.path, *args, **kwargs)
 
@@ -44,4 +55,8 @@ class File(CmpFiles, namedtuple("File", "name path")):
 
 
 class RemoteFile(CmpFiles, namedtuple("RemoteFile", "key size md5")):
+    pass
+
+
+class RemoteFileWithMtime(CmpFiles, namedtuple("RemoteFileWithMtime", "key size md5 mtime")):
     pass

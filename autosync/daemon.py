@@ -50,6 +50,12 @@ def next(*iters):
         except StopIteration:
             results.append(None)
     return results
+
+original_sorted = sorted
+def sorted(items, *args, **kwargs):
+    if hasattr(items, 'already_sorted') and items.already_sorted:
+        return item 
+    return original_sorted(items, *args, **kwargs)
         
 
 def merge(iter_a, iter_b, func_a, func_b, func_both):
@@ -102,7 +108,8 @@ class State(object):
             name = name[len(self.prefix):]
         while name.startswith('/'):
             name = name[1:]
-        return File(name, path)
+        f = File(name, path)
+        return f
 
 
 class SyncState(State):
@@ -206,7 +213,7 @@ class Uploader(object):
                     pass
 
 
-def main(argv = None, stdin = None, stdout=None, stderr=None):
+def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     import sys
     argv = argv or sys.argv
     stdin = stdin or sys.stdin
@@ -219,11 +226,14 @@ def main(argv = None, stdin = None, stdout=None, stderr=None):
         print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
         return 1
 
-    def actor_factory():
+    def actor_factory(actor=actor):
+        if not actor:
+            if FLAGS.actor in ACTOR_CONNECTION_FACTORIES:
+                actor = ACTOR_CONNECTION_FACTORIES[FLAGS.actor]
+            else:
+                eval("from %s import %s as actor" % (".".join(actor.split(".")[:-1]), actor.split(".")[-1]))
+        return actor(FLAGS.target_container, FLAGS.target_prefix).get_container()
 
-        actor = ACTOR_CONNECTION_FACTORIES[FLAGS.actor]
-        actor = actor(FLAGS.target_container, FLAGS.target_prefix)
-        return actor.get_container()
 
     uploader = Uploader(actor_factory, argv, FLAGS.source_prefix)
     threads = list(uploader.run())
