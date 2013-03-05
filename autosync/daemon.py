@@ -36,7 +36,7 @@ import autosync.actors
 import autosync.actors.s3
 from autosync.files import File
 import os.path
-
+import re
 import gflags
 
 if use_gevent:
@@ -47,6 +47,8 @@ FLAGS = gflags.FLAGS
 gflags.DEFINE_string('target_container', None, 'The remote bucket to write into.  This would be an S3 bucket, rackspace container, rsync host and module or maybe Drive letter in Windows')
 
 gflags.DEFINE_string('target_prefix', '', 'The "directory" within the target to write files into')
+
+gflags.DEFINE_string('source_filter', '^.*$', 'Only accept files that match this regex')
 
 gflags.DEFINE_string('source_prefix', None, 'The path to strip from the local file name\' absolute path.   This works like s3cmd\'s -P flag or acts like the current directory would when rsyncing, scping or taring non-absolute paths')
 
@@ -141,7 +143,13 @@ class State(object):
 
 
 class SyncState(State):
+    RE = None
 
+    def acceptable(self, s):
+        if self.RE is None:
+            self.RE = re.compile(FLAGS.source_filter)
+        return bool(self.RE.match(s))
+        
     def add_path_to_que(self, path):
         self.local_que.put(self.filename_to_File(path))
         
