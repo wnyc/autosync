@@ -151,7 +151,8 @@ class SyncState(State):
         return bool(self.RE.match(s))
         
     def add_path_to_que(self, path):
-        self.local_que.put(self.filename_to_File(path))
+        if acceptable(path):
+            self.local_que.put(self.filename_to_File(path))
         
     def walker(self,_ , dirname, fnames):
         fnames.sort()
