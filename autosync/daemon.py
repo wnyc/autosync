@@ -20,7 +20,9 @@ gflags.DEFINE_string('target_container', None, 'The remote bucket to write into.
 
 gflags.DEFINE_string('target_prefix', '', 'The "directory" within the target to write files into')
 
-gflags.DEFINE_string('source_filter', '^.*$', 'Only accept files that match this regex')
+gflags.DEFINE_string('encoding', 'utf-8', 'Encoding to use for filenames')
+
+gflags.DEFINE_string('source_filter', '^.*$', 'Only accept files that match this regex')gflags.DEFINE_string('target_prefix', '', 'The "directory" within the target to write files into')
 
 gflags.DEFINE_string('source_prefix', None, 'The path to strip from the local file name\' absolute path.   This works like s3cmd\'s -P flag or acts like the current directory would when rsyncing, scping or taring non-absolute paths')
 
@@ -133,6 +135,10 @@ class State(object):
         self.local_que = Queue()
         self.que = que
         self.prefix = prefix
+        self.RE = re.compile(FLAGS.source_filter)
+
+    def acceptable(self, s):
+        return bool(self.RE.match(s))
 
     def upload(self, key):
         self.que.put(('u', key))
@@ -160,7 +166,8 @@ class SyncState(State):
         return bool(self.RE.match(s))
         
     def add_path_to_que(self, path):
-        self.local_que.put(self.filename_to_File(path))
+        if self.acceptable(path):
+            self.local_que.put(self.filename_to_File(path.encode(flags.ENCODING)))
         
     def walker(self,_ , dirname, fnames):
         fnames.sort()
@@ -197,18 +204,20 @@ class TrackState(State, ProcessEvent):
     def process_IN_CREATE(self, event):
         path = os.path.join(event.path, event.name)
         if os.path.isfile(path):
-            self.upload(self.filename_to_File(path))
+            if self.acceptable(path):
+                self.upload(self.filename_to_File(path))
         elif os.path.isdir(path):
             self.wm.add_watch(path, self.mask, rec=True)
 
     def process_IN_MODIFY(self, event):
         path = os.path.join(event.path, event.name)
-        if os.path.isfile(path):
+        if os.path.isfile(path) and self.acceptable(path):
             self.upload(self.filename_to_File(path))
 
     def process_IN_DELETE(self, event):
         path = os.path.join(event.path, event.name)
-        self.delete(self.filename_to_File(path))
+        if self.acceptable(path):
+            self.delete(self.filename_to_File(path))
     
     def run(self):
         for f in self.files:
