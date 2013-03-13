@@ -276,6 +276,9 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
         return 1
 
     def actor_factory(actor=actor):
+        error = actor.validate_flags()
+        if error:
+            print >>stderr, "%s\nUsage: %s ARGS\\n%s" % (error, sys.argv[0], FLAGS)
         if not actor:
             if FLAGS.actor in ACTOR_CONNECTION_FACTORIES:
                 actor = ACTOR_CONNECTION_FACTORIES[FLAGS.actor]

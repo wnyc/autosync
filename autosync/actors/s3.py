@@ -19,6 +19,11 @@ class S3Container(Container):
             return
         except S3ResponseError:
             self.container = self.connection.create_bucket(container_name)
+
+    @staticmethod
+    def validate_flags():
+        """Return a string error message if there is a problem with a flag"""
+        return None
             
     def list(self):
         return (RemoteFile(obj.key, obj.size, obj.etag.replace('"', '')) for obj in self.container.list(prefix=self.prefix))
