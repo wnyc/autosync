@@ -32,8 +32,45 @@ gflags.DEFINE_boolean('start_sync', True, 'Perform an initial scan of all local 
 
 gflags.DEFINE_integer('threads', 100, 'Number of upload threads.  Most operations are I/O, not CPU bound, so feel free to make this very high')
 
+gflags.DEFINE_enum('threader', 'gevent', ['thread', 'gevent'], "Select threading module")
+
 
 ACTOR_CONNECTION_FACTORIES = {'s3': autosync.actors.s3.Connection}
+
+def spawn(func, *args, **kwargs):
+    if FLAGS.threader=='gevent':
+        import gevent
+        return gevent.spawn(func, *args, **kwargs)
+    if FLAGS.threader=='thread':
+        import thread
+        lock = thread.allocate_lock()
+        def join_emulator(func, lock, *args, **kwargs):
+            func(*args, **kwargs)
+            lock.release()
+
+        lock.acquire(True)
+
+        args = (func, lock) + tuple(args)
+        thread.start_new_thread(join_emulator, args, kwargs)
+        return lock
+
+def Queue(*args, **kwargs):
+    if FLAGS.threader=='gevent':
+        import gevent
+        return gevent.Queue(*args, **kwargs)
+    if FLAGS.threader=='thread':
+        import Queue
+        return Queue.Queue(*args, **kwargs)
+
+def joinall(locks):
+    if FLAGs.threader == 'gvent':
+        import gevent
+        return gevent.joinall(locks)
+    if FLAGS.threader=='thread':
+        for lock in locks:
+            lock.acquire(True)
+            lock.release()
+        return
 
 def usage():
     print "autosync: source-file, [source-file]..."
@@ -222,6 +259,10 @@ class Uploader(object):
 
 
 def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
+    if FLAGS.threader == 'gevent':
+        import gevent
+        gevent.patch_all(select=False)
+
     import sys
     argv = argv or sys.argv
     stdin = stdin or sys.stdin
