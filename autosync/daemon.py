@@ -1,9 +1,5 @@
 import select 
 from pyinotify import WatchManager, Notifier, ThreadedNotifier, EventsCodes, ProcessEvent
-import gevent
-from gevent import queue, spawn, joinall
-from gevent.queue import Queue
-from gevent.monkey import patch_all
 import autosync
 import autosync.actors
 import autosync.actors.s3
@@ -11,8 +7,6 @@ from autosync.files import File
 import os.path
 import re
 import gflags
-
-patch_all(select=False)
 
 FLAGS = gflags.FLAGS
 
@@ -22,7 +16,7 @@ gflags.DEFINE_string('target_prefix', '', 'The "directory" within the target to 
 
 gflags.DEFINE_string('encoding', 'utf-8', 'Encoding to use for filenames')
 
-gflags.DEFINE_string('source_filter', '^.*$', 'Only accept files that match this regex')gflags.DEFINE_string('target_prefix', '', 'The "directory" within the target to write files into')
+gflags.DEFINE_string('source_filter', '^.*$', 'Only accept files that match this regex')
 
 gflags.DEFINE_string('source_prefix', None, 'The path to strip from the local file name\' absolute path.   This works like s3cmd\'s -P flag or acts like the current directory would when rsyncing, scping or taring non-absolute paths')
 
@@ -56,16 +50,25 @@ def spawn(func, *args, **kwargs):
         thread.start_new_thread(join_emulator, args, kwargs)
         return lock
 
-def Queue(*args, **kwargs):
+def sleep(seconds=0):
     if FLAGS.threader=='gevent':
         import gevent
-        return gevent.Queue(*args, **kwargs)
+        return gevent.sleep(seconds)
+    if FLAGS.threader=='thread':
+        import time
+        return time.sleep(seconds)
+
+
+def Queue(*args, **kwargs):
+    if FLAGS.threader=='gevent':
+        import gevent.queue
+        return gevent.queue.Queue(*args, **kwargs)
     if FLAGS.threader=='thread':
         import Queue
         return Queue.Queue(*args, **kwargs)
 
 def joinall(locks):
-    if FLAGs.threader == 'gvent':
+    if FLAGS.threader == 'gvent':
         import gevent
         return gevent.joinall(locks)
     if FLAGS.threader=='thread':
@@ -92,12 +95,6 @@ def next(*iters):
             results.append(None)
     return results
 
-original_sorted = sorted
-def sorted(items, *args, **kwargs):
-    if hasattr(items, 'already_sorted') and items.already_sorted:
-        return item 
-    return original_sorted(items, *args, **kwargs)
-        
 
 def merge(iter_a, iter_b, func_a, func_b, func_both):
     next_a, next_b = next(iter_a, iter_b)
@@ -121,7 +118,7 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
     while next_a:
         next_a = next(iter_a)[0]
         if next_a: func_a(next_a)
-    
+
     while next_b:
         next_b = next(iter_b)[0]
         if next_b: func_b(next_b)
@@ -167,7 +164,14 @@ class SyncState(State):
         
     def add_path_to_que(self, path):
         if self.acceptable(path):
-            self.local_que.put(self.filename_to_File(path.encode(flags.ENCODING)))
+            try:
+                path = path.encode(FLAGS.encoding)
+            except:
+                print "Failed to encode", FLAGS.encoding
+            try:
+                self.local_que.put(self.filename_to_File(path))
+            except:
+                print "Failed to upload ", path
         
     def walker(self,_ , dirname, fnames):
         fnames.sort()
@@ -187,8 +191,8 @@ class SyncState(State):
 
     def run(self):
         self.walker_job = spawn(self.walker_thread, self.files)
-        merge(iter(sorted(iterify_queue(self.local_que))), 
-              iter(sorted(self.actor.list())),
+        merge(iter(sorted(iterify_queue(self.local_que), key=lambda x:x.key)), 
+              iter(sorted(self.actor.list(), key=lambda x:x.key)),
               self.upload, self.delete, self.upload)
         joinall((self.walker_job,))
 
@@ -228,7 +232,7 @@ class TrackState(State, ProcessEvent):
                 self.notifier.process_events()
                 if self.notifier.check_events(100):
                     self.notifier.read_events()
-                gevent.sleep(0)
+                sleep(0)
         except KeyboardInterrupt:
             self.notifier.stop()
 
@@ -268,9 +272,6 @@ class Uploader(object):
 
 
 def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
-    if FLAGS.threader == 'gevent':
-        import gevent
-        gevent.patch_all(select=False)
 
     import sys
     argv = argv or sys.argv
@@ -283,6 +284,9 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     except gflags.FlagsError, e:
         print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
         return 1
+    #if FLAGS.threader == 'gevent':
+    #    import gevent.monkey
+    #    gevent.monkey.patch_all(select=False)
 
     def actor_factory(actor=actor):
         error = actor.validate_flags()
