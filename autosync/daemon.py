@@ -70,13 +70,11 @@ def Queue(*args, **kwargs):
         return Queue.Queue(*args, **kwargs)
 
 def joinall(locks):
-    print "Joinall: ", locks
     if FLAGS.threader == 'gvent':
         import gevent
         return gevent.joinall(locks)
     if FLAGS.threader=='thread':
         for lock in locks:
-            print "Blocked on lock:", lock
             while not lock.acquire(False):
                 import time
                 time.sleep(1000)
@@ -105,23 +103,17 @@ def next(*iters):
 def merge(iter_a, iter_b, func_a, func_b, func_both):
     next_a, next_b = next(iter_a, iter_b)
     while all((next_a, next_b)):
-        print "Merge start:", next_a.key, next_b.key
         if next_a.key < next_b.key:
-            print "Uploading: ",next_a.key
             func_a(next_a)
             next_a = next(iter_a)[0]
             continue
         if next_a.key > next_b.key:
-            print "Deleting: ", next_b.key
             func_b(next_b)
             next_b = next(iter_b)[0]
             continue
         if next_a.size != next_b.size:
-            print "Both: ", next_a.key, next_a.size, next_b.key, next_b.size
             if next_a.mtime != next_b.mtime:
                 func_both(next_a)
-        else:
-            print "Doing nothing"
         next_a, next_b = next(iter_a, iter_b)
 
     
@@ -150,26 +142,17 @@ class State(object):
 
     def acceptable(self, s):
         if not self.RE.match(s):
-            print "not acceptable:", s
             return False
         if not self.EXCLUDE:
-            print "acceptable:", s
             return True
-        ret = not self.EXCLUDE.match(s)
-        if ret:
-            print "acceptable:", s
-        else:
-            print "not acceptable:", s
-        return ret
+        return not self.EXCLUDE.match(s)
 
     def upload(self, key):
         item = ('u', key)
-        print "Queing: ", item
         self.que.put(item)
         
     def delete(self, key):
         item = ('d', key)
-        print "Queing: ", item
         self.que.put(item)
                 
     def filename_to_File(self, path):
@@ -212,7 +195,6 @@ class SyncState(State):
             else:
                 os.path.walk(source, self.walker, None)
         self.local_que.put(None)
-        print "Walker thread done"
 
     def run(self):
         self.walker_job = spawn(self.walker_thread, self.files)
@@ -231,13 +213,11 @@ class TrackState(State, ProcessEvent):
         self.notifier = Notifier(self.wm, self)
 
     def process_IN_CLOSE_WRITE(self, event):
-        print "IN_CLOSE_WRITE:", event
         path = os.path.join(event.path, event.name)
         if os.path.isfile(path) and self.acceptable(path):
             self.upload(self.filename_to_File(path))
 
     def process_IN_DELETE(self, event):
-        print "IN_DELETE:", event
         path = os.path.join(event.path, event.name)
         if self.acceptable(path):
             self.delete(self.filename_to_File(path))
@@ -277,7 +257,6 @@ class Uploader(object):
         actor = actor_factory()
         while True:
             task, key = self.que.get()
-            print "Worker thread received: ", task, key
             if task == 'd':
                 try:
                     actor.delete(key)
