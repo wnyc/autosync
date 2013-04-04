@@ -7,6 +7,7 @@ from autosync.files import File
 import os.path
 import re
 import gflags
+import signal
 
 FLAGS = gflags.FLAGS
 
@@ -17,6 +18,8 @@ gflags.DEFINE_string('target_prefix', '', 'The "directory" within the target to 
 gflags.DEFINE_string('encoding', 'utf-8', 'Encoding to use for filenames')
 
 gflags.DEFINE_string('source_filter', '^.*$', 'Only accept files that match this regex')
+
+gflags.DEFINE_string('source_exclude', None, 'Reject files that match this regex')
 
 gflags.DEFINE_string('source_prefix', None, 'The path to strip from the local file name\' absolute path.   This works like s3cmd\'s -P flag or acts like the current directory would when rsyncing, scping or taring non-absolute paths')
 
@@ -58,7 +61,6 @@ def sleep(seconds=0):
         import time
         return time.sleep(seconds)
 
-
 def Queue(*args, **kwargs):
     if FLAGS.threader=='gevent':
         import gevent.queue
@@ -68,12 +70,16 @@ def Queue(*args, **kwargs):
         return Queue.Queue(*args, **kwargs)
 
 def joinall(locks):
+    print "Joinall: ", locks
     if FLAGS.threader == 'gvent':
         import gevent
         return gevent.joinall(locks)
     if FLAGS.threader=='thread':
         for lock in locks:
-            lock.acquire(True)
+            print "Blocked on lock:", lock
+            while not lock.acquire(False):
+                import time
+                time.sleep(1000)
             lock.release()
         return
 
@@ -98,20 +104,24 @@ def next(*iters):
 
 def merge(iter_a, iter_b, func_a, func_b, func_both):
     next_a, next_b = next(iter_a, iter_b)
-    while True:
-        if not all((next_a, next_b)): 
-            break
+    while all((next_a, next_b)):
+        print "Merge start:", next_a.key, next_b.key
         if next_a.key < next_b.key:
+            print "Uploading: ",next_a.key
             func_a(next_a)
             next_a = next(iter_a)[0]
             continue
         if next_a.key > next_b.key:
+            print "Deleting: ", next_b.key
             func_b(next_b)
             next_b = next(iter_b)[0]
             continue
         if next_a.size != next_b.size:
-            if next_a.md5 != next_b.md5:
+            print "Both: ", next_a.key, next_a.size, next_b.key, next_b.size
+            if next_a.mtime != next_b.mtime:
                 func_both(next_a)
+        else:
+            print "Doing nothing"
         next_a, next_b = next(iter_a, iter_b)
 
     
@@ -133,23 +143,40 @@ class State(object):
         self.que = que
         self.prefix = prefix
         self.RE = re.compile(FLAGS.source_filter)
+        if FLAGS.source_exclude:
+            self.EXCLUDE = re.compile(FLAGS.source_exclude)
+        else:
+            self.EXCLUDE = None
 
     def acceptable(self, s):
-        return bool(self.RE.match(s))
+        if not self.RE.match(s):
+            print "not acceptable:", s
+            return False
+        if not self.EXCLUDE:
+            print "acceptable:", s
+            return True
+        ret = not self.EXCLUDE.match(s)
+        if ret:
+            print "acceptable:", s
+        else:
+            print "not acceptable:", s
+        return ret
 
     def upload(self, key):
-        self.que.put(('u', key))
+        item = ('u', key)
+        print "Queing: ", item
+        self.que.put(item)
         
     def delete(self, key):
-        self.que.put(('d', key))
+        item = ('d', key)
+        print "Queing: ", item
+        self.que.put(item)
                 
     def filename_to_File(self, path):
         path = os.path.abspath(path)
         name = path
         if name.startswith(self.prefix):
             name = name[len(self.prefix):]
-        while name.startswith('/'):
-            name = name[1:]
         f = File(name, path)
         return f
 
@@ -157,17 +184,14 @@ class State(object):
 class SyncState(State):
     RE = None
 
-    def acceptable(self, s):
-        if self.RE is None:
-            self.RE = re.compile(FLAGS.source_filter)
-        return bool(self.RE.match(s))
-        
     def add_path_to_que(self, path):
         if self.acceptable(path):
             try:
-                path = path.encode(FLAGS.encoding)
+                if FLAGS.encoding:
+                    path = path.encode(FLAGS.encoding)
             except:
                 print "Failed to encode", FLAGS.encoding
+                return 
             try:
                 self.local_que.put(self.filename_to_File(path))
             except:
@@ -188,37 +212,32 @@ class SyncState(State):
             else:
                 os.path.walk(source, self.walker, None)
         self.local_que.put(None)
+        print "Walker thread done"
 
     def run(self):
         self.walker_job = spawn(self.walker_thread, self.files)
+        # joinall((self.walker_job,))
         merge(iter(sorted(iterify_queue(self.local_que), key=lambda x:x.key)), 
               iter(sorted(self.actor.list(), key=lambda x:x.key)),
               self.upload, self.delete, self.upload)
-        joinall((self.walker_job,))
 
 
 class TrackState(State, ProcessEvent):
-    mask = EventsCodes.OP_FLAGS['IN_DELETE'] | EventsCodes.OP_FLAGS['IN_CREATE'] | EventsCodes.OP_FLAGS['IN_MODIFY']
+    mask = EventsCodes.OP_FLAGS['IN_DELETE'] | EventsCodes.OP_FLAGS['IN_CLOSE_WRITE'] 
 
     def __init__(self, *args, **kwargs):
         State.__init__(self, *args, **kwargs)
         self.wm = WatchManager()
         self.notifier = Notifier(self.wm, self)
 
-    def process_IN_CREATE(self, event):
-        path = os.path.join(event.path, event.name)
-        if os.path.isfile(path):
-            if self.acceptable(path):
-                self.upload(self.filename_to_File(path))
-        elif os.path.isdir(path):
-            self.wm.add_watch(path, self.mask, rec=True)
-
-    def process_IN_MODIFY(self, event):
+    def process_IN_CLOSE_WRITE(self, event):
+        print "IN_CLOSE_WRITE:", event
         path = os.path.join(event.path, event.name)
         if os.path.isfile(path) and self.acceptable(path):
             self.upload(self.filename_to_File(path))
 
     def process_IN_DELETE(self, event):
+        print "IN_DELETE:", event
         path = os.path.join(event.path, event.name)
         if self.acceptable(path):
             self.delete(self.filename_to_File(path))
@@ -226,7 +245,7 @@ class TrackState(State, ProcessEvent):
     def run(self):
         for f in self.files:
             f = os.path.abspath(f)
-            self.wm.add_watch(f, self.mask, rec=True)
+            self.wm.add_watch(f, self.mask, rec=True, auto_add=True)
         try:
             while True:
                 self.notifier.process_events()
@@ -249,16 +268,16 @@ class Uploader(object):
         trackstate = TrackState(self.actor_factory(), self.argv, self.source_prefix, self.que)
         syncstate = SyncState(self.actor_factory(), self.argv, self.source_prefix, self.que)
 
+        yield spawn(trackstate.run)
+        yield spawn(syncstate.run)
         for x in range(FLAGS.threads):
             yield spawn(self.uploader_thread, self.actor_factory)
-
-        syncstate.run()
-        trackstate.run()
             
     def uploader_thread(self, actor_factory):
         actor = actor_factory()
         while True:
             task, key = self.que.get()
+            print "Worker thread received: ", task, key
             if task == 'd':
                 try:
                     actor.delete(key)
@@ -266,7 +285,8 @@ class Uploader(object):
                     pass
             elif task == 'u':
                 try:
-                    actor.upload(key)
+                    if actor.upload(key):
+                        self.que.put((task, key))
                 except (OSError, IOError):
                     pass
 
@@ -303,7 +323,13 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     uploader = Uploader(actor_factory, argv, FLAGS.source_prefix)
     threads = list(uploader.run())
 
-    joinall(threads)
+
+    try:
+        joinall(threads)
+        
+    except KeyboardInterrupt:
+        pass
+            
         
     
 

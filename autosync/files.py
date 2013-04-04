@@ -12,9 +12,7 @@ class CmpFiles:
         else:
             return cmp(self.key, other.key) or \
                 cmp(self.size, other.size) * 2 or \
-                ( cmp(self.mtime, other.mtime) * 4 and \
-                  cmp(self.md5, other.md5) * 8)
-            
+                ( cmp(self.mtime, other.mtime) * 4)            
 
 class File(CmpFiles, namedtuple("File", "name path")):
 
