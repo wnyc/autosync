@@ -35,7 +35,7 @@ class S3Container(Container):
         filename = os.path.join(FLAGS.target_prefix, key.name)
         while filename.startswith('/'):
             filename = filename[1:]
-        print key
+
         k = Key(self.container)
         k.key = filename
         k.set_contents_from_filename(key.path)

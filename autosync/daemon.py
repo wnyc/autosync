@@ -71,7 +71,7 @@ def Queue(*args, **kwargs):
 
 def joinall(locks):
     print "Joinall: ", locks
-    if FLAGS.threader == 'gvent':
+    if FLAGS.threader == 'gevent':
         import gevent
         return gevent.joinall(locks)
     if FLAGS.threader=='thread':
@@ -175,8 +175,9 @@ class State(object):
     def filename_to_File(self, path):
         path = os.path.abspath(path)
         name = path
-        if name.startswith(self.prefix):
-            name = name[len(self.prefix):]
+        if self.prefix:
+            if name.startswith(self.prefix):
+                name = name[len(self.prefix):]
         f = File(name, path)
         return f
 
@@ -192,10 +193,10 @@ class SyncState(State):
             except:
                 print "Failed to encode", FLAGS.encoding
                 return 
-            try:
-                self.local_que.put(self.filename_to_File(path))
-            except:
-                print "Failed to upload ", path
+            #try:
+            self.local_que.put(self.filename_to_File(path))
+            #except:
+            #    print "Failed to upload ", path
         
     def walker(self,_ , dirname, fnames):
         fnames.sort()
@@ -208,7 +209,7 @@ class SyncState(State):
         for source in sources:
             source = os.path.abspath(source)
             if os.path.isfile(source):
-                self.add_path_to_que(fname)
+                self.add_path_to_que(source)
             else:
                 os.path.walk(source, self.walker, None)
         self.local_que.put(None)
@@ -304,9 +305,9 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     except gflags.FlagsError, e:
         print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
         return 1
-    #if FLAGS.threader == 'gevent':
-    #    import gevent.monkey
-    #    gevent.monkey.patch_all(select=False)
+    if FLAGS.threader == 'gevent':
+        import gevent.monkey
+        gevent.monkey.patch_all(select=False)
 
     def actor_factory(actor=actor):
         error = actor.validate_flags()
