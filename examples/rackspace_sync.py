@@ -14,13 +14,14 @@ gflags.DEFINE_string("key", None, "Your rackspace API key")
 
 
 class RackspaceActor(object):
+
     def __init__(self, container, prefix):
         print "Creating RackspaceActor"
         self.cxn = cloudfiles.get_connection(
             FLAGS.user,
             FLAGS.key)
         self.container = self.cxn.get_container(container)
-        self.prefix = prefix 
+        self.prefix = prefix
 
     # Boto baggage that is going away in version 0.0.6
     def get_container(self):
@@ -41,8 +42,8 @@ class RackspaceActor(object):
             for last in items:
                 print last, last.__class__
                 yield autosync.files.RemoteFile(last['name'], last['bytes'], last['hash'])
-            items = json.loads(self.container.list_objects(marker=last, format='json')[0])
-                
+            items = json.loads(self.container.list_objects(marker=last,
+                               format='json')[0])
 
     @staticmethod
     def filename(s):
@@ -52,11 +53,10 @@ class RackspaceActor(object):
     def upload(self, key):
         o = self.container.create_object(self.filename(key.name))
         o.send(key.open())
-    
+
     def delete(self, key):
         self.container.delete_object(self.filename(key.key))
 
-    
 
 if __name__ == "__main__":
     autosync.daemon.main(actor=RackspaceActor)
