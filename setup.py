@@ -35,9 +35,9 @@ setup(
     ],
     url="https://github.com/wnyc/autosync",
     install_requires=[
-        "python-gflags",
         "boto",
         "gevent",
-        "pyinotify"
+        "pyinotify",
+        "python-gflags",
     ]
 )
