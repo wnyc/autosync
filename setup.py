@@ -17,28 +17,27 @@ setup(
     author_email='adeprince@nypublicradio.org',
     description='Efficent synchronization of the local file system to S3',
     long_description=__doc__,
-    py_modules = [
+    py_modules=[
         "autosync/__init__",
         "autosync/actors/__init__",
         "autosync/actors/s3",
         "autosync/daemon",
         "autosync/files",
-        ],
-    packages = ["autosync"],
+    ],
+    packages=["autosync"],
     zip_safe=True,
     license='GPL',
     include_package_data=True,
     classifiers=[
-        ],
-    scripts = [
+    ],
+    scripts=[
         'scripts/autosync',
-        ],
-    url = "https://github.com/wnyc/autosync",
-    install_requires = [
+    ],
+    url="https://github.com/wnyc/autosync",
+    install_requires=[
         "python-gflags",
         "boto",
         "gevent",
         "pyinotify"
-        ]
+    ]
 )
-
