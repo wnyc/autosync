@@ -11,6 +11,7 @@ FLAGS = gflags.FLAGS
 
 
 class S3Container(Container):
+
     def __init__(self, connection, container_name, prefix):
         self.connection = connection
         self.prefix = prefix
@@ -24,7 +25,7 @@ class S3Container(Container):
     def validate_flags():
         """Return a string error message if there is a problem with a flag"""
         return None
-            
+
     def list(self):
         return (RemoteFile(obj.key, obj.size, obj.etag.replace('"', '')) for obj in self.container.list(prefix=self.prefix))
 
@@ -40,13 +41,12 @@ class S3Container(Container):
         k.key = filename
         k.set_contents_from_filename(key.path)
 
-        
+
 class Connection(Connection):
     Container = S3Container
+
     def __call__(self):
         return self.get_container()
 
-    
     def get_connection(self):
         return boto.connect_s3()
-        

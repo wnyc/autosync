@@ -179,6 +179,7 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
 
 
 class State(object):
+
     def __init__(self, actor, files, prefix, que):
         self.files = files
         self.actor = actor
@@ -302,6 +303,7 @@ class TrackState(State, ProcessEvent):
 
 
 class Uploader(object):
+
     def __init__(self, actor_factory, argv, source_prefix):
         self.argv = argv
         self.source_prefix = source_prefix

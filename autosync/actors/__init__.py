@@ -1,5 +1,6 @@
 
 class Container(object):
+
     def __init__(self, connection, container, prefix):
         self.connection = connection
         self.container = container
@@ -19,7 +20,5 @@ class Connection(object):
     Container = Container
 
     def get_container(self):
-        return self.Container(self.connection, 
-                         self.container, self.prefix)
-
-
+        return self.Container(self.connection,
+                              self.container, self.prefix)
