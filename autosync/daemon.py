@@ -70,13 +70,12 @@ def Queue(*args, **kwargs):
         return Queue.Queue(*args, **kwargs)
 
 def joinall(locks):
-    print "Joinall: ", locks
-    if FLAGS.threader == 'gvent':
+    if FLAGS.threader == 'gevent':
+
         import gevent
         return gevent.joinall(locks)
     if FLAGS.threader=='thread':
         for lock in locks:
-            print "Blocked on lock:", lock
             while not lock.acquire(False):
                 import time
                 time.sleep(1000)
@@ -105,7 +104,6 @@ def next(*iters):
 def merge(iter_a, iter_b, func_a, func_b, func_both):
     next_a, next_b = next(iter_a, iter_b)
     while all((next_a, next_b)):
-        print "Merge start:", next_a.key, next_b.key
         if next_a.key < next_b.key:
             print "Uploading: ",next_a.key
             func_a(next_a)
@@ -117,7 +115,6 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
             next_b = next(iter_b)[0]
             continue
         if next_a.size != next_b.size:
-            print "Both: ", next_a.key, next_a.size, next_b.key, next_b.size
             if next_a.mtime != next_b.mtime:
                 func_both(next_a)
         else:
@@ -175,8 +172,9 @@ class State(object):
     def filename_to_File(self, path):
         path = os.path.abspath(path)
         name = path
-        if name.startswith(self.prefix):
-            name = name[len(self.prefix):]
+        if self.prefix:
+            if name.startswith(self.prefix):
+                name = name[len(self.prefix):]
         f = File(name, path)
         return f
 
@@ -208,7 +206,7 @@ class SyncState(State):
         for source in sources:
             source = os.path.abspath(source)
             if os.path.isfile(source):
-                self.add_path_to_que(fname)
+                self.add_path_to_que(source)
             else:
                 os.path.walk(source, self.walker, None)
         self.local_que.put(None)
@@ -304,9 +302,9 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     except gflags.FlagsError, e:
         print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
         return 1
-    #if FLAGS.threader == 'gevent':
-    #    import gevent.monkey
-    #    gevent.monkey.patch_all(select=False)
+    if FLAGS.threader == 'gevent':
+        import gevent.monkey
+        gevent.monkey.patch_all(select=False)
 
     def actor_factory(actor=actor):
         error = actor.validate_flags()
