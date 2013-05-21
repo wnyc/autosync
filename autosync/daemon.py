@@ -4,9 +4,10 @@ import autosync
 import autosync.actors
 import autosync.actors.s3
 from autosync.files import File
+import gflags
+from loggin import info, debug, warning
 import os.path
 import re
-import gflags
 import signal
 
 FLAGS = gflags.FLAGS
@@ -36,6 +37,7 @@ gflags.DEFINE_enum('threader', 'gevent', ['thread', 'gevent'], "Select threading
 
 ACTOR_CONNECTION_FACTORIES = {'s3': autosync.actors.s3.Connection}
 
+
 def spawn(func, *args, **kwargs):
     if FLAGS.threader=='gevent':
         import gevent
@@ -53,6 +55,7 @@ def spawn(func, *args, **kwargs):
         thread.start_new_thread(join_emulator, args, kwargs)
         return lock
 
+
 def sleep(seconds=0):
     if FLAGS.threader=='gevent':
         import gevent
@@ -61,6 +64,7 @@ def sleep(seconds=0):
         import time
         return time.sleep(seconds)
 
+
 def Queue(*args, **kwargs):
     if FLAGS.threader=='gevent':
         import gevent.queue
@@ -68,6 +72,7 @@ def Queue(*args, **kwargs):
     if FLAGS.threader=='thread':
         import Queue
         return Queue.Queue(*args, **kwargs)
+
 
 def joinall(locks):
     if FLAGS.threader == 'gevent':
@@ -83,7 +88,7 @@ def joinall(locks):
         return
 
 def usage():
-    print "autosync: source-file, [source-file]..."
+    sys.stderr.write("autosync: source-file, [source-file]...\n")
 
 def iterify_queue(q):
     while True:
@@ -105,12 +110,12 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
     next_a, next_b = next(iter_a, iter_b)
     while all((next_a, next_b)):
         if next_a.key < next_b.key:
-            print "Uploading: ",next_a.key
+            debug( "Uploading: %s" % next_a.key )
             func_a(next_a)
             next_a = next(iter_a)[0]
             continue
         if next_a.key > next_b.key:
-            print "Deleting: ", next_b.key
+            debug("Deleting: %s" % next_b.key)
             func_b(next_b)
             next_b = next(iter_b)[0]
             continue
@@ -118,7 +123,7 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
             if next_a.mtime != next_b.mtime:
                 func_both(next_a)
         else:
-            print "Doing nothing"
+            debug"Doing nothing")
         next_a, next_b = next(iter_a, iter_b)
 
     
@@ -147,26 +152,26 @@ class State(object):
 
     def acceptable(self, s):
         if not self.RE.match(s):
-            print "not acceptable:", s
+            debug("not acceptable: %s" % (s,))
             return False
         if not self.EXCLUDE:
-            print "acceptable:", s
+            debug("acceptable: %s" % (s,))
             return True
         ret = not self.EXCLUDE.match(s)
         if ret:
-            print "acceptable:", s
+            debug("acceptable: %s" % (s,))
         else:
-            print "not acceptable:", s
+            debug("not acceptable: %s" % (s,))
         return ret
 
     def upload(self, key):
         item = ('u', key)
-        print "Queing: ", item
+        debug("Queing: %s" % (item,))
         self.que.put(item)
         
     def delete(self, key):
         item = ('d', key)
-        print "Queing: ", item
+        debug("Queing: %s" % (item,))
         self.que.put(item)
                 
     def filename_to_File(self, path):
@@ -188,12 +193,12 @@ class SyncState(State):
                 if FLAGS.encoding:
                     path = path.encode(FLAGS.encoding)
             except:
-                print "Failed to encode", FLAGS.encoding
+                warning("Failed to encode %s to %s" % (path, FLAGS.encoding))
                 return 
             try:
                 self.local_que.put(self.filename_to_File(path))
             except:
-                print "Failed to upload ", path
+                warning("Failed to upload %s" % (path,))
         
     def walker(self,_ , dirname, fnames):
         fnames.sort()
@@ -210,7 +215,7 @@ class SyncState(State):
             else:
                 os.path.walk(source, self.walker, None)
         self.local_que.put(None)
-        print "Walker thread done"
+        debug("Walker thread complete")
 
     def run(self):
         self.walker_job = spawn(self.walker_thread, self.files)
@@ -229,13 +234,13 @@ class TrackState(State, ProcessEvent):
         self.notifier = Notifier(self.wm, self)
 
     def process_IN_CLOSE_WRITE(self, event):
-        print "IN_CLOSE_WRITE:", event
+        debug("IN_CLOSE_WRITE: %r" % (event,))
         path = os.path.join(event.path, event.name)
         if os.path.isfile(path) and self.acceptable(path):
             self.upload(self.filename_to_File(path))
 
     def process_IN_DELETE(self, event):
-        print "IN_DELETE:", event
+        debug("IN_DELETE: %r" % (event,))
         path = os.path.join(event.path, event.name)
         if self.acceptable(path):
             self.delete(self.filename_to_File(path))
@@ -275,7 +280,7 @@ class Uploader(object):
         actor = actor_factory()
         while True:
             task, key = self.que.get()
-            print "Worker thread received: ", task, key
+            debug("Worker thread received: %s %s" % (task, key)
             if task == 'd':
                 try:
                     actor.delete(key)
@@ -300,7 +305,7 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     try:
         argv = FLAGS(argv)[1:]
     except gflags.FlagsError, e:
-        print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
+        sys.stderr.write("%s\\nUsage: %s ARGS\\n%s\n" % (e, sys.argv[0], FLAGS))
         return 1
     if FLAGS.threader == 'gevent':
         import gevent.monkey
@@ -309,14 +314,13 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     def actor_factory(actor=actor):
         error = actor.validate_flags()
         if error:
-            print >>stderr, "%s\nUsage: %s ARGS\\n%s" % (error, sys.argv[0], FLAGS)
+            sys.stderr.write("%s\nUsage: %s ARGS\\n%s\n" % (error, sys.argv[0], FLAGS))
         if not actor:
             if FLAGS.actor in ACTOR_CONNECTION_FACTORIES:
                 actor = ACTOR_CONNECTION_FACTORIES[FLAGS.actor]
             else:
                 eval("from %s import %s as actor" % (".".join(actor.split(".")[:-1]), actor.split(".")[-1]))
         return actor(FLAGS.target_container, FLAGS.target_prefix).get_container()
-
 
     uploader = Uploader(actor_factory, argv, FLAGS.source_prefix)
     threads = list(uploader.run())
