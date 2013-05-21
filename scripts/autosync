@@ -1,0 +1,5 @@
+#!/usr/bin/python
+
+from autosync.daemon import main
+
+main()
