@@ -20,7 +20,7 @@ At WNYC we wrote autosync to solve this very problem.  Autosync is an
 easy to extend framework that takes care of mirroring and keeping
 mirrored files from one location to another.  Out of the box it
 supports Amazon S3; Rackspace support is provided in the [backend
-creation example](https://github.com/wnyc/autosync/blob/master/examples/rackspace_sync.py)
+creation example](https://github.com/wnyc/autosync/blob/master/examples/rackspace_sync.py).
 
 Superficially it isn't all that dissimilar from `while true; do s3put
 ... ; sleep 1; done`.  Except it is faster and uses fewer resources
