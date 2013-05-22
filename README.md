@@ -1,27 +1,31 @@
+Autosync
+========
+
 Ever have a workflow that requires a copy of a directory be maintained
-in another location?  Perhaps you created a cronjob task that looks like
-this:
+in another location?  
 
-    * * * * * s3put -w -b my_bucket /home/me/stuff
+Perhaps you created a cronjob task that looks like
+this?
 
-Copying entire filesystems from point A to point B is a common system
-anti-pattern.  Most tools that solve this are procedural:
-their semantics state that files are to be copied from target to
-source.
+    * * * * * s3put -w -b my_bucket /home/my/stuff
 
-Better would be declarative approach.  We should only need to specific
-that a target needs to be kept in sync with a source and trust the
-underlying tool to figure out how that will happen.
+The copying entire directories from point A to point B is a common
+system anti-pattern.  Most tools that solve this are procedural: their
+semantics state that files are to be copied from target to source.
 
-Autosync is such a declarative tool copy.  Functionally it is simialr
-to ``while true; do s3put ... ; sleep 1; done`` but far more efficent.
-efficient.  It uses inotify to track changes instead of making
-multiple passes; a full directory scan is only performed once upon
-start instead of iteratively.  Multiple threads and concurrent
-transfers are used to hide network I/O latency.
+Autosync was written in the beleive a declarative approach.  We should
+only need to specific that a target needs to be kept in sync with a
+source and trust the underlying tool to figure out how to make that happen.
+
+Functionally it is simialar to `while true; do s3put ... ; sleep 1;
+done`, except it is faster and less resource intensive.  Autosync uses
+inotify to track changes instead of making multiple passes; a full
+directory scan is only performed once upon start instead of
+iteratively.  Multiple threads and concurrent transfers are used to
+hide network I/O latency.
 
 Using autosync
-===================
+==============
 
 Installation
 ------------
@@ -68,7 +72,9 @@ repos - whatever its called, it goes into this parameter.
 Configuration
 -------------
 
-Autosync has no configuraiton files.  It does use boto and depends upon the credentials in `~/.boto`.  
+Autosync has no configuraiton files.  It does use
+[boto](https://github.com/boto/boto) which will need to be provided
+login credentials.
 
 Prefixes
 ============
@@ -193,9 +199,6 @@ Extending autosync
 
 Now lets look at how autosync is extended.  There there three steps to
 extending autosync:
-
-Configuration parameters.
--------------------------
 
 You want autosync's main method to know about any parameters that
 might be specific to your application.  Fortunately gflags make this
