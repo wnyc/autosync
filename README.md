@@ -237,3 +237,5 @@ autosync.  You do this with the following code snippet:
     if __name__ == "__main__":
         main(actor=MediaFileActor)
 
+The full source to the rackspace example can be found in [rackspace_sync.py](https://github.com/wnyc/autosync/blob/master/examples/rackspace_sync.py)
+
