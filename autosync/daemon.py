@@ -1,6 +1,8 @@
-import select
-from pyinotify import (WatchManager, Notifier, ThreadedNotifier, EventsCodes,
-                       ProcessEvent)
+use_gevent = False
+
+import select 
+from pyinotify import WatchManager, Notifier, ThreadedNotifier, EventsCodes, ProcessEvent
+
 import autosync
 import autosync.actors
 import autosync.actors.s3
@@ -9,6 +11,7 @@ import gflags
 from loggin import info, debug, warning
 import os.path
 import re
+import gflags
 import signal
 
 FLAGS = gflags.FLAGS
