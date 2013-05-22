@@ -24,18 +24,15 @@ directory scan is only performed once upon start instead of
 iteratively.  Multiple threads and concurrent transfers are used to
 hide network I/O latency.
 
-Using autosync
-==============
-
 Installation
-------------
+============
 
 Autosync is a registered package in the pypi repository; it can be instlled with pip:
 
     pip install autosync
 
 Running
--------
+=======
 
 Running autosync requires only a source directory path and infromation
 about the desired target.  By default autosync writes to S3; the
