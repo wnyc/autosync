@@ -6,6 +6,7 @@ import cloudfiles
 import gflags
 import json
 import os.path
+from logging import warn, debug, info
 
 FLAGS = gflags.FLAGS
 
@@ -16,7 +17,7 @@ gflags.DEFINE_string("key", None, "Your rackspace API key")
 class RackspaceActor(object):
 
     def __init__(self, container, prefix):
-        print "Creating RackspaceActor"
+        debug("Creating RackspaceActor")
         self.cxn = cloudfiles.get_connection(
             FLAGS.user,
             FLAGS.key)
@@ -36,11 +37,11 @@ class RackspaceActor(object):
 
     def list(self):
         # http://trac.cyberduck.ch/ticket/3950
-        print self.container.list_objects(format='json')
+        debug(self.container.list_objects(format='json'))
         items = json.loads(self.container.list_objects(format='json')[0])
         while items:
             for last in items:
-                print last, last.__class__
+                debug(last, last.__class__)
                 yield autosync.files.RemoteFile(last['name'], last['bytes'], last['hash'])
             items = json.loads(self.container.list_objects(marker=last,
                                format='json')[0])
