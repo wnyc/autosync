@@ -1,7 +1,7 @@
 Autosync
 ========
 
-Ever have a workflow that requires a copy of a directory be maintained
+Ever have a work-flow that requires a copy of a directory be maintained
 in another location?  
 
 Perhaps you created a cronjob task that looks like
@@ -12,29 +12,30 @@ this?
 The copying entire directories from point A to point B is a common
 system anti-pattern.  Most tools that solve this are procedural: their
 semantics state that files are to be copied from target to source.
+Far better would be a declarative approach - define a target directory
+that should be left in sync with a source and simple run a tool to
+maintain this state.
 
-Autosync was written in the beleive a declarative approach.  We should
-only need to specific that a target needs to be kept in sync with a
-source and trust the underlying tool to figure out how to make that happen.
+At WNYC we wrote autosync to solve this very problem.  Autosync is an
+easy to extend framework that takes care of mirroring and keeping
+mirrored files from one location to another.
 
-Functionally it is simialar to `while true; do s3put ... ; sleep 1;
-done`, except it is faster and less resource intensive.  Autosync uses
-inotify to track changes instead of making multiple passes; a full
-directory scan is only performed once upon start instead of
-iteratively.  Multiple threads and concurrent transfers are used to
-hide network I/O latency.
+Superficially it isn't all that dissimilar from `while true; do s3put
+... ; sleep 1; done`.  Except it is faster and uses fewer resources
+than conventional solutions to this problem.
+
 
 Installation
 ============
 
-Autosync is a registered package in the pypi repository; it can be instlled with pip:
+Autosync is a registered package in the pypi repository; it can be installed with pip:
 
     pip install autosync
 
 Running
 =======
 
-Running autosync requires only a source directory path and infromation
+Running autosync requires only a source directory path and information
 about the desired target.  By default autosync writes to S3; the
 configuration for an S3 uploader can be as simple as:
 
@@ -49,7 +50,7 @@ Other targets can be specified with the actor parameter.
  --actor: The full name of the module and class use to generate a
    connection to the target. So if you created a connection object
    called my.foobar.Connection you would type
-   --actor=my.foobar.Connection. Moduled included with autosync
+   --actor=my.foobar.Connection. Modules included with autosync
    (i.e. autosync.actors.*.Connection) can be abbreviated with the
    base module name (i.e. --actor=s3) (default: 's3')
 
@@ -69,7 +70,7 @@ repos - whatever its called, it goes into this parameter.
 Configuration
 -------------
 
-Autosync has no configuraiton files.  It does use
+Autosync has no configuration files.  It does use
 [boto](https://github.com/boto/boto) which will need to be provided
 login credentials.
 
@@ -112,7 +113,7 @@ you will create a tar file with a layout that looks like this:
     a/b/3
     c/4
 
-With tar and zip the currect directory defines the root of your tree.
+With tar and zip the current directory defines the root of your tree.
 
 In autosync this root is made explicit.  When running autosync if you say:
 
@@ -162,12 +163,11 @@ which will give you a file layout that looks like this
     /c/4
 
 Depending on your backend this could mean something very different.
-It doesn't matter for S3, but it does for WAAA because inside of puppy
-these values might be passed to os.pathjoin and used to generate urls.
-If the second parameter in os.path.join starts with a /, the first
-parameter is omitted.  So:
+It doesn't for Amazon S3, but at least one of WNYC's internal
+work flows uses `os.path.join` to connect the bucket and file name.
+`os.path.join` is sensitive to leading slashes in file names:
 
-    >>> import os.path
+    >>> import SOs.path
     >>> os.path.join('a', 'b') 
     'a/b'
     >>> os.path.join('a', '/b') 
@@ -197,7 +197,7 @@ Extending autosync
 Now lets look at how autosync is extended.  There there three steps to
 extending autosync:
 
-You want autosync's main method to know about any parameters that
+You want auto sync's main method to know about any parameters that
 might be specific to your application.  Fortunately gflags make this
 really painlessly easy.
 
@@ -213,7 +213,7 @@ Now the next step is to create a a class that implements the autosync
 actor interface.  This interface requires three methods:
 
 *`list`* returns a generator that produces autosync.files.File compatible
-objects describing what's already in your datastore.  Recall autosync
+objects describing what's already in your data store.  Recall autosync
 is threaded -- if this data is sorted by primary key autosync is able
 to perform a merge and determine which files need to be added or
 removed before the download of file listings is complete.  To indicate
@@ -236,3 +236,4 @@ autosync.  You do this with the following code snippet:
 
     if __name__ == "__main__":
         main(actor=MediaFileActor)
+
