@@ -1,5 +1,34 @@
+use_gevent = False
+import sqlite3
 import select 
 from pyinotify import WatchManager, Notifier, ThreadedNotifier, EventsCodes, ProcessEvent
+
+if use_gevent:
+    import gevent
+    from gevent import spawn, joinall
+    from gevent.queue import Queue
+    from gevent.monkey import patch_all
+else:
+    import thread
+    from Queue import Queue
+    # Duplicate gevent's semantics with thread 
+    def spawn(func, *args, **kwargs):
+        lock = thread.allocate_lock()
+        def join_emulator(func, lock, *args, **kwargs):
+            func(*args, **kwargs)
+            lock.release()
+
+        lock.acquire(True)
+
+        args = (lock,) + tuple(args)
+        return thread.start_new_thread(join_emulator, args, kwargs)
+
+    def joinall(locks):
+        for lock in locks:
+            lock.acquire(True)
+            lock.release(True)
+    
+
 import autosync
 import autosync.actors
 import autosync.actors.s3
@@ -32,6 +61,9 @@ gflags.DEFINE_boolean('start_sync', True, 'Perform an initial scan of all local 
 gflags.DEFINE_integer('threads', 100, 'Number of upload threads.  Most operations are I/O, not CPU bound, so feel free to make this very high')
 
 gflags.DEFINE_enum('threader', 'gevent', ['thread', 'gevent'], "Select threading module")
+
+gflags.DEFINE_string('trace_path', None, 'Path for detailed sqlite debug trace')
+
 
 
 ACTOR_CONNECTION_FACTORIES = {'s3': autosync.actors.s3.Connection}
@@ -100,12 +132,33 @@ def next(*iters):
             results.append(None)
     return results
 
+original_sorted = sorted
+def sorted(items, *args, **kwargs):
+    if hasattr(items, 'already_sorted') and items.already_sorted:
+        return item 
+    return original_sorted(items, *args, **kwargs)
+        
+
+def trace(filename, action):
+    if not FLAGS.trace_path:
+        return
+    while True:
+        try:
+            trace_db = sqlite3.connect(FLAGS.trace_path)
+            print "Trace: ", filename, action
+            trace_db.execute('insert into trace(filename, action) values (?, ?);', (str(filename), str(action)))
+            trace_db.commit()
+            return
+        except sqlite3.OperationalError:
+            pass
+
 
 def merge(iter_a, iter_b, func_a, func_b, func_both):
     next_a, next_b = next(iter_a, iter_b)
     while all((next_a, next_b)):
         if next_a.key < next_b.key:
             print "Uploading: ",next_a.key
+            trace(next_a.key, 'merge: func_a via a greater')
             func_a(next_a)
             next_a = next(iter_a)[0]
             continue
@@ -114,9 +167,9 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
             func_b(next_b)
             next_b = next(iter_b)[0]
             continue
-        if next_a.size != next_b.size:
-            if next_a.mtime != next_b.mtime:
-                func_both(next_a)
+        if next_a.size != next_b.size or next_a.mtime != next_b.mtime:
+            trace(next_a.key, 'merge: func_both')
+            func_both(next_a)
         else:
             print "Doing nothing"
         next_a, next_b = next(iter_a, iter_b)
@@ -124,12 +177,15 @@ def merge(iter_a, iter_b, func_a, func_b, func_both):
     
     while next_a:
         next_a = next(iter_a)[0]
-        if next_a: func_a(next_a)
-
+        if next_a: 
+            trace(next_a.key, 'merge: func_a via end of merge')
+            func_a(next_a)
+    
     while next_b:
         next_b = next(iter_b)[0]
-        if next_b: func_b(next_b)
-
+        if next_b: 
+            trace(next_b.key, 'merge: func_b via end of merge')
+            func_b(next_b)
 
 
 class State(object):
@@ -161,11 +217,13 @@ class State(object):
 
     def upload(self, key):
         item = ('u', key)
+        trace(key.key, 'Queing for upload')
         print "Queing: ", item
         self.que.put(item)
         
     def delete(self, key):
         item = ('d', key)
+        trace(key.key, 'Queing for delete')
         print "Queing: ", item
         self.que.put(item)
                 
@@ -232,13 +290,17 @@ class TrackState(State, ProcessEvent):
         print "IN_CLOSE_WRITE:", event
         path = os.path.join(event.path, event.name)
         if os.path.isfile(path) and self.acceptable(path):
+            trace(path, "process_IN_CLOSE_WRITE")
             self.upload(self.filename_to_File(path))
 
     def process_IN_DELETE(self, event):
         print "IN_DELETE:", event
         path = os.path.join(event.path, event.name)
         if self.acceptable(path):
+            trace(path, "process_IN_DELETE")
             self.delete(self.filename_to_File(path))
+
+        self.delete(self.filename_to_File(path))
     
     def run(self):
         for f in self.files:
@@ -265,7 +327,7 @@ class Uploader(object):
     def run(self):
         trackstate = TrackState(self.actor_factory(), self.argv, self.source_prefix, self.que)
         syncstate = SyncState(self.actor_factory(), self.argv, self.source_prefix, self.que)
-
+        
         yield spawn(trackstate.run)
         yield spawn(syncstate.run)
         for x in range(FLAGS.threads):
@@ -274,19 +336,25 @@ class Uploader(object):
     def uploader_thread(self, actor_factory):
         actor = actor_factory()
         while True:
-            task, key = self.que.get()
-            print "Worker thread received: ", task, key
+            task, key = self.que.get(block=True)
+                      
+            trace(key.key, "Worker thread received %s" % (task,))
             if task == 'd':
                 try:
                     actor.delete(key)
+                    trace(key.key, 'Delete Done')
                 except (OSError, IOError):
-                    pass
+                    trace(key.key, "Failed on OS or IO Error")
+
             elif task == 'u':
                 try:
                     if actor.upload(key):
+                        trace(key.key, "Upload failed reque")
                         self.que.put((task, key))
+                    else:
+                        trace(key.key, 'Upload Done')
                 except (OSError, IOError):
-                    pass
+                      trace(key.key, "Failed on OS or IO Error")
 
 
 def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
@@ -296,12 +364,18 @@ def main(argv = None, stdin = None, stdout=None, stderr=None, actor=None):
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
-    
+
     try:
         argv = FLAGS(argv)[1:]
     except gflags.FlagsError, e:
         print >>stderr, "%s\\nUsage: %s ARGS\\n%s" % (e, sys.argv[0], FLAGS)
         return 1
+
+    if FLAGS.trace_path:
+        trace_db = sqlite3.connect(FLAGS.trace_path)
+        trace_db.execute("create table if not exists trace(filename text, action text, ts timestamp default CURRENT_TIMESTAMP);")
+
+
     if FLAGS.threader == 'gevent':
         import gevent.monkey
         gevent.monkey.patch_all(select=False)
