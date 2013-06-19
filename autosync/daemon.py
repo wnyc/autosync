@@ -33,6 +33,7 @@ import autosync
 import autosync.actors
 import autosync.actors.s3
 from autosync.files import File
+import BaseHTTPServer
 import os.path
 import re
 import gflags
@@ -64,6 +65,7 @@ gflags.DEFINE_enum('threader', 'gevent', ['thread', 'gevent'], "Select threading
 
 gflags.DEFINE_string('trace_path', None, 'Path for detailed sqlite debug trace')
 
+gflags.DEFINE_integer('port', None, 'Port for http server.  Leave undefined to disable http server')
 
 
 ACTOR_CONNECTION_FACTORIES = {'s3': autosync.actors.s3.Connection}
@@ -315,7 +317,27 @@ class TrackState(State, ProcessEvent):
         except KeyboardInterrupt:
             self.notifier.stop()
 
+class HttpState(State):
+
+    class Handler(BaseHTTPServer.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(201)
+            self.end_headers()
+            self.upload(self.path)
+    
+    def run(self):
+        server_class=BaseHTTPServer.HTTPServer
+        handler_class = self.Handler
+        handler_class.upload = lambda _, path:self.upload(self.filename_to_File(path))
         
+        server_address = ('127.0.0.1', FLAGS.port)
+        httpd = server_class(server_address, handler_class)
+        
+        try:
+            while True: 
+                httpd.handle_request()
+        except KeyboardInterrupt:
+            pass
         
 class Uploader(object):
     def __init__(self, actor_factory, argv, source_prefix):
@@ -327,9 +349,13 @@ class Uploader(object):
     def run(self):
         trackstate = TrackState(self.actor_factory(), self.argv, self.source_prefix, self.que)
         syncstate = SyncState(self.actor_factory(), self.argv, self.source_prefix, self.que)
-        
+
+        if FLAGS.port != None:
+            yield spawn(HttpState(self.actor_factory(), self.argv, self.source_prefix, self.que).run)
+
         yield spawn(trackstate.run)
         yield spawn(syncstate.run)
+
         for x in range(FLAGS.threads):
             yield spawn(self.uploader_thread, self.actor_factory)
             

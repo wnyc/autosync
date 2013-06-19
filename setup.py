@@ -12,7 +12,7 @@ from setuptools import setup
 
 setup(
     name='autosync',
-    version='0.0.4',
+    version='0.0.5',
     author='Adam DePrince',
     author_email='adeprince@nypublicradio.org',
     description='Efficent synchronization of the local file system to S3',
